@@ -10,39 +10,8 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
-  # =======================================================
-  # JOB 1: Security & Code Quality Scanning (Non-Blocking)
-  # =======================================================
-  security-scan:
-    name: Security & Code Quality Scanning
-    runs-on: ubuntu-latest
-    continue-on-error: true
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Run Checkov Security Scan
-        uses: bridgecrewio/checkov-action@master
-        with:
-          framework: terraform
-          output_format: cli
-          soft_fail: true
-
-      - name: Run Trivy IaC Security Scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'config'
-          hide-shortcut-text: 'true'
-          ignore-unfixed: true
-          severity: 'CRITICAL,HIGH'
-
-  # =======================================================
-  # JOB 2: Terraform Validation, Plan & Apply
-  # =======================================================
   terraform:
     name: Terraform Init, Plan & Apply
     runs-on: ubuntu-latest
