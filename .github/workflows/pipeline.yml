@@ -1,24 +1,61 @@
-name: Azure Landing Zone CI/CD Pipeline
+name: Terraform CI-CD
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
     branches:
       - main
 
 permissions:
   contents: read
 
+env:
+  TF_WORKING_DIR: ./prod_parent_module
+  ARM_USE_OIDC: false
+
 jobs:
-  terraform:
-    name: Terraform Init, Plan & Apply
+
+  # =========================
+  # 1. SCAN STAGE
+  # =========================
+  scan:
+    name: Terraform Security Scan
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: ./environment/dev
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Format Check
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate
+
+      # Gitleaks - Secret Scan
+      - name: Gitleaks Scan
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+  # =========================
+  # 2. PLAN STAGE
+  # =========================
+  plan:
+    name: Terraform Plan
+    needs: scan
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Code
@@ -26,27 +63,75 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.0
 
-      - name: Log in to Azure
-        uses: azure/login@v2
+      # Azure Login using Service Principal + Client Secret
+      - name: Azure Login
+        uses: azure/login@v3
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
-      - name: Terraform Format Check
-        run: terraform fmt -check -recursive ../..
-        continue-on-error: true
+      - name: Check Azure Login
+        run: az account show
 
       - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform init
 
       - name: Terraform Validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform validate
 
       - name: Terraform Plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform plan -out=tfplan
 
+      # Save plan for Apply stage
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: ${{ env.TF_WORKING_DIR }}/tfplan
+
+
+  # =========================
+  # 3. APPLY STAGE
+  # =========================
+  apply:
+    name: Terraform Apply
+    needs: plan
+    runs-on: ubuntu-latest
+
+    # Manual approval configured on GitHub Environment
+    environment:
+      name: production
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # Azure Login using Service Principal + Client Secret
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      - name: Check Azure Login
+        run: az account show
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init
+
+      # Download plan generated in Plan stage
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan
+          path: ${{ env.TF_WORKING_DIR }}
+
       - name: Terraform Apply
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -auto-approve tfplan
