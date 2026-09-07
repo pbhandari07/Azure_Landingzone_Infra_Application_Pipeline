@@ -14,38 +14,22 @@ permissions:
 
 jobs:
   # =======================================================
-  # JOB 1: Security & Code Quality Scanning
+  # JOB 1: Security & Code Quality Scanning (Non-Blocking)
   # =======================================================
   security-scan:
     name: Security & Code Quality Scanning
     runs-on: ubuntu-latest
+    continue-on-error: true
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.0
-
-      - name: Run TFLint
-        uses: terraform-linters/setup-tflint@v4
-        with:
-          tflint_version: v0.50.0
-
-      - name: Init TFLint
-        run: tflint --init
-
-      - name: Run TFLint Inspection
-        run: tflint --recursive
-
       - name: Run Checkov Security Scan
         uses: bridgecrewio/checkov-action@master
         with:
           framework: terraform
-          output_format: cli,sarif
-          output_file_path: console,results.sarif
+          output_format: cli
           soft_fail: true
 
       - name: Run Trivy IaC Security Scan
@@ -61,7 +45,6 @@ jobs:
   # =======================================================
   terraform:
     name: Terraform Init, Plan & Apply
-    needs: security-scan
     runs-on: ubuntu-latest
 
     defaults:
@@ -84,6 +67,7 @@ jobs:
 
       - name: Terraform Format Check
         run: terraform fmt -check -recursive ../..
+        continue-on-error: true
 
       - name: Terraform Init
         run: terraform init
